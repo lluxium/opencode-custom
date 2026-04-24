@@ -1,7 +1,7 @@
 import { useNavigate, useParams } from "@solidjs/router"
 import { createEffect, createMemo, For, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
-import { createSortable } from "@thisbeyond/solid-dnd"
+import { createSortable, DragDropProvider, DragDropSensors, SortableProvider, closestCenter, type DragEvent } from "@thisbeyond/solid-dnd"
 import { createMediaQuery } from "@solid-primitives/media"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { getFilename } from "@opencode-ai/core/util/path"
@@ -17,7 +17,7 @@ import { type LocalProject } from "@/context/layout"
 import { loadSessionsQuery, useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
-import { sortedRootSessions, workspaceKey } from "./helpers"
+import { groupSessionsByTag, sortedRootSessions, sortSessionsBy, workspaceKey } from "./helpers"
 import { useQuery } from "@tanstack/solid-query"
 
 type InlineEditorComponent = (props: {
@@ -445,20 +445,151 @@ export const LocalWorkspace = (props: {
   mobile?: boolean
 }): JSX.Element => {
   const globalSync = useGlobalSync()
-  const language = useLanguage()
   const workspace = createMemo(() => {
     const [store, setStore] = globalSync.child(props.project.worktree)
     return { store, setStore }
   })
   const slug = createMemo(() => base64Encode(props.project.worktree))
-  const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
+  const sessions = createMemo(() => {
+    const key = workspaceKey(props.project.worktree)
+    const all = workspace().store.session ?? []
+    return all
+      .filter(
+        (s) => workspaceKey(s.directory) === key && !s.parentID && !s.time?.archived,
+      )
+      .slice()
+      .sort(sortSessionsBy(props.sortNow()))
+  })
+  const groups = createMemo(() => groupSessionsByTag(sessions()))
   const count = createMemo(() => sessions()?.length ?? 0)
   const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree) }))
   const hasMore = createMemo(() => workspace().store.sessionTotal > count())
   const loading = () => query.isLoading && count() === 0
   const loadMore = async () => {
-    workspace().setStore("limit", (limit) => (limit ?? 0) + 5)
+    workspace().setStore("limit", 10000)
     await globalSync.project.loadSessions(props.project.worktree)
+  }
+
+  const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
+  const isExpanded = (tag: string) => expanded[tag] !== false
+
+  const orderKey = createMemo(() => `opencode:tag-order:${workspaceKey(props.project.worktree)}`)
+  const readOrder = (): string[] => {
+    try {
+      const raw = localStorage.getItem(orderKey())
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : []
+    } catch {
+      return []
+    }
+  }
+  const [order, setOrder] = createStore<{ value: string[] }>({ value: readOrder() })
+  createEffect(() => {
+    orderKey()
+    setOrder("value", readOrder())
+  })
+
+  const draggableGroups = createMemo(() => {
+    const all = groups().filter((g) => g.tag !== "기타")
+    const map = new Map(all.map((g) => [g.tag, g]))
+    const ordered: typeof all = []
+    for (const tag of order.value) {
+      const g = map.get(tag)
+      if (!g) continue
+      ordered.push(g)
+      map.delete(tag)
+    }
+    const remaining = [...map.values()].sort((a, b) => a.tag.localeCompare(b.tag))
+    return [...ordered, ...remaining]
+  })
+  const pinnedGroup = createMemo(() => groups().find((g) => g.tag === "기타"))
+
+  createEffect(() => {
+    count()
+    if (!loading() && hasMore()) void loadMore()
+  })
+
+  // Force re-fetch when worktree switches (per-folder filtering)
+  createEffect(() => {
+    props.project.worktree
+    void loadMore()
+  })
+
+  function handleDragEnd(event: DragEvent) {
+    const { draggable, droppable } = event
+    if (!draggable || !droppable) return
+    const tags = draggableGroups().map((g) => g.tag)
+    const fromIndex = tags.indexOf(draggable.id.toString())
+    const toIndex = tags.indexOf(droppable.id.toString())
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) return
+    const result = tags.slice()
+    const [item] = result.splice(fromIndex, 1)
+    if (!item) return
+    result.splice(toIndex, 0, item)
+    setOrder("value", result)
+    try {
+      localStorage.setItem(orderKey(), JSON.stringify(result))
+    } catch {}
+  }
+
+  const setAllExpanded = (value: boolean) => {
+    for (const g of groups()) setExpanded(g.tag, value)
+  }
+
+  const renderGroup = (group: { tag: string; sessions: Session[] }) => (
+    <Collapsible
+      variant="ghost"
+      open={isExpanded(group.tag)}
+      onOpenChange={(value) => setExpanded(group.tag, value)}
+      class="shrink-0"
+    >
+      <div class="py-0.5">
+        <Collapsible.Trigger class="flex items-center w-full pl-2 pr-2 py-1 rounded-md hover:bg-surface-raised-base-hover">
+          <div class="flex items-center gap-1.5 min-w-0 flex-1">
+            <Icon
+              name={isExpanded(group.tag) ? "chevron-down" : "chevron-right"}
+              size="small"
+              class="text-icon-base shrink-0"
+            />
+            <span class="text-13-medium text-text-weak min-w-0 truncate">{group.tag}</span>
+            <span class="text-12-regular text-text-weak shrink-0">{group.sessions.length}</span>
+          </div>
+        </Collapsible.Trigger>
+      </div>
+      <Collapsible.Content>
+        <nav class="flex flex-col gap-1">
+          <For each={group.sessions}>
+            {(session) => (
+              <SessionItem
+                session={session}
+                list={sessions()}
+                navList={props.ctx.navList}
+                slug={slug()}
+                mobile={props.mobile}
+                showChild
+                sidebarExpanded={props.ctx.sidebarExpanded}
+                clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
+                prefetchSession={props.ctx.prefetchSession}
+                archiveSession={props.ctx.archiveSession}
+              />
+            )}
+          </For>
+        </nav>
+      </Collapsible.Content>
+    </Collapsible>
+  )
+
+  const DraggableGroup = (p: { group: { tag: string; sessions: Session[] } }) => {
+    const sortable = createSortable(p.group.tag)
+    return (
+      <div
+        // @ts-ignore
+        use:sortable
+        classList={{ "opacity-30": sortable.isActiveDraggable }}
+      >
+        {renderGroup(p.group)}
+      </div>
+    )
   }
 
   return (
@@ -466,17 +597,38 @@ export const LocalWorkspace = (props: {
       ref={(el) => props.ctx.setScrollContainerRef(el, props.mobile)}
       class="size-full flex flex-col py-2 overflow-y-auto no-scrollbar [overflow-anchor:none]"
     >
-      <WorkspaceSessionList
-        slug={slug}
-        mobile={props.mobile}
-        ctx={props.ctx}
-        showNew={() => false}
-        loading={loading}
-        sessions={sessions}
-        hasMore={hasMore}
-        loadMore={loadMore}
-        language={language}
-      />
+      <Show when={loading()}>
+        <SessionSkeleton />
+      </Show>
+      <Show when={groups().length > 0}>
+        <div class="flex justify-end gap-0.5 px-2 pb-1">
+          <Tooltip value="전체 펼치기" placement="top">
+            <IconButton
+              icon="expand"
+              variant="ghost"
+              class="size-6 rounded-md"
+              aria-label="전체 펼치기"
+              onClick={() => setAllExpanded(true)}
+            />
+          </Tooltip>
+          <Tooltip value="전체 접기" placement="top">
+            <IconButton
+              icon="collapse"
+              variant="ghost"
+              class="size-6 rounded-md"
+              aria-label="전체 접기"
+              onClick={() => setAllExpanded(false)}
+            />
+          </Tooltip>
+        </div>
+      </Show>
+      <DragDropProvider onDragEnd={handleDragEnd} collisionDetector={closestCenter}>
+        <DragDropSensors />
+        <SortableProvider ids={draggableGroups().map((g) => g.tag)}>
+          <For each={draggableGroups()}>{(group) => <DraggableGroup group={group} />}</For>
+        </SortableProvider>
+      </DragDropProvider>
+      <Show when={pinnedGroup()} keyed>{(group) => renderGroup(group)}</Show>
     </div>
   )
 }

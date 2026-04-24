@@ -28,6 +28,8 @@ function sortSessions(now: number) {
   }
 }
 
+export const sortSessionsBy = sortSessions
+
 const isRootVisibleSession = (session: Session, directory: string) =>
   workspaceKey(session.directory) === workspaceKey(directory) && !session.parentID && !session.time?.archived
 
@@ -35,6 +37,33 @@ export const roots = (store: SessionStore) =>
   (store.session ?? []).filter((session) => isRootVisibleSession(session, store.path.directory))
 
 export const sortedRootSessions = (store: SessionStore, now: number) => roots(store).sort(sortSessions(now))
+
+const tagPattern = /^\[(.+?)\]/
+
+export const groupSessionsByTag = (sessions: Session[]) => {
+  const groups = new Map<string, Session[]>()
+  const untagged: Session[] = []
+
+  for (const session of sessions) {
+    const match = session.title?.match(tagPattern)
+    if (match) {
+      const tag = match[1]
+      const existing = groups.get(tag)
+      if (existing) existing.push(session)
+      else groups.set(tag, [session])
+    } else {
+      untagged.push(session)
+    }
+  }
+
+  const result = [...groups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([tag, sessions]) => ({ tag, sessions }))
+
+  if (untagged.length > 0) result.push({ tag: "기타", sessions: untagged })
+
+  return result
+}
 
 export const latestRootSession = (stores: SessionStore[], now: number) =>
   stores.flatMap(roots).sort(sortSessions(now))[0]
