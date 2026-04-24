@@ -60,6 +60,11 @@ export const SessionRoutes = lazy(() =>
             .meta({ description: "Filter sessions updated on or after this timestamp (milliseconds since epoch)" }),
           search: z.string().optional().meta({ description: "Filter sessions by title (case-insensitive)" }),
           limit: z.coerce.number().optional().meta({ description: "Maximum number of sessions to return" }),
+          archived: z.coerce.boolean().optional().meta({ description: "Include archived sessions (default false)" }),
+          onlyArchived: z.coerce
+            .boolean()
+            .optional()
+            .meta({ description: "Only return archived sessions (default false)" }),
         }),
       ),
       async (c) => {
@@ -71,6 +76,8 @@ export const SessionRoutes = lazy(() =>
           start: query.start,
           search: query.search,
           limit: query.limit,
+          archived: query.archived,
+          onlyArchived: query.onlyArchived,
         })) {
           sessions.push(session)
         }
@@ -288,7 +295,11 @@ export const SessionRoutes = lazy(() =>
           permission: Permission.Ruleset.zod.optional(),
           time: z
             .object({
-              archived: z.number().optional(),
+              archived: z
+                .number()
+                .nullable()
+                .optional()
+                .meta({ description: "Archive timestamp (ms since epoch); pass null to unarchive" }),
             })
             .optional(),
         }),
@@ -309,7 +320,7 @@ export const SessionRoutes = lazy(() =>
               permission: Permission.merge(current.permission ?? [], updates.permission),
             })
           }
-          if (updates.time?.archived !== undefined) {
+          if (updates.time !== undefined && "archived" in updates.time) {
             yield* session.setArchived({ sessionID, time: updates.time.archived })
           }
 

@@ -1651,6 +1651,8 @@ export class Session2 extends HeyApiClient {
       start?: number
       search?: string
       limit?: number
+      archived?: boolean
+      onlyArchived?: boolean
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1665,6 +1667,8 @@ export class Session2 extends HeyApiClient {
             { in: "query", key: "start" },
             { in: "query", key: "search" },
             { in: "query", key: "limit" },
+            { in: "query", key: "archived" },
+            { in: "query", key: "onlyArchived" },
           ],
         },
       ],
@@ -1826,7 +1830,10 @@ export class Session2 extends HeyApiClient {
       title?: string
       permission?: PermissionRuleset
       time?: {
-        archived?: number
+        /**
+         * Archive timestamp (ms since epoch); pass null to unarchive
+         */
+        archived?: number | null
       }
     },
     options?: Options<never, ThrowOnError>,

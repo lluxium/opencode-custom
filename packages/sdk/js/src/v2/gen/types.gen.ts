@@ -3298,6 +3298,14 @@ export type SessionListData = {
      * Maximum number of sessions to return
      */
     limit?: number
+    /**
+     * Include archived sessions (default false)
+     */
+    archived?: boolean
+    /**
+     * Only return archived sessions (default false)
+     */
+    onlyArchived?: boolean
   }
   url: "/session"
 }
@@ -3447,7 +3455,10 @@ export type SessionUpdateData = {
     title?: string
     permission?: PermissionRuleset
     time?: {
-      archived?: number
+      /**
+       * Archive timestamp (ms since epoch); pass null to unarchive
+       */
+      archived?: number | null
     }
   }
   path: {

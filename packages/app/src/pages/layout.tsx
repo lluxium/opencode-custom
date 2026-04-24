@@ -985,6 +985,25 @@ export default function Layout(props: ParentProps) {
     }
   }
 
+  async function unarchiveSession(session: Session) {
+    await globalSDK.client.session.update({
+      directory: session.directory,
+      sessionID: session.id,
+      time: { archived: null },
+    })
+    const [, setStore] = globalSync.child(session.directory)
+    setStore(
+      produce((draft) => {
+        const match = Binary.search(draft.session, session.id, (s) => s.id)
+        if (!match.found) {
+          draft.session.splice(match.index, 0, { ...session, time: { ...session.time, archived: undefined } })
+        } else {
+          draft.session[match.index] = { ...session, time: { ...session.time, archived: undefined } }
+        }
+      }),
+    )
+  }
+
   async function archiveSession(session: Session) {
     const [store, setStore] = globalSync.child(session.directory)
     const sessions = store.session ?? []
@@ -1972,6 +1991,7 @@ export default function Layout(props: ParentProps) {
     clearHoverProjectSoon,
     prefetchSession,
     archiveSession,
+    unarchiveSession,
     workspaceName,
     renameWorkspace,
     editorOpen,
@@ -2018,6 +2038,7 @@ export default function Layout(props: ParentProps) {
       clearHoverProjectSoon,
       prefetchSession,
       archiveSession,
+      unarchiveSession,
     },
   }
 

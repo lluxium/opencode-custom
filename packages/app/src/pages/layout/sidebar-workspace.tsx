@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from "@solidjs/router"
-import { createEffect, createMemo, For, Show, type Accessor, type JSX } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSortable, DragDropProvider, DragDropSensors, SortableProvider, closestCenter, type DragEvent } from "@thisbeyond/solid-dnd"
 import { createMediaQuery } from "@solid-primitives/media"
@@ -15,10 +15,21 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { type Session } from "@opencode-ai/sdk/v2/client"
 import { type LocalProject } from "@/context/layout"
 import { loadSessionsQuery, useGlobalSync } from "@/context/global-sync"
+import { useGlobalSDK } from "@/context/global-sdk"
 import { useLanguage } from "@/context/language"
 import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
 import { groupSessionsByTag, sortedRootSessions, sortSessionsBy, workspaceKey } from "./helpers"
 import { useQuery } from "@tanstack/solid-query"
+
+type ArchiveFilter = "active" | "archived" | "all"
+const ARCHIVE_FILTER_VALUES: ArchiveFilter[] = ["all", "active", "archived"]
+const isArchiveFilter = (value: unknown): value is ArchiveFilter =>
+  typeof value === "string" && (ARCHIVE_FILTER_VALUES as string[]).includes(value)
+const ARCHIVE_FILTER_LABEL: Record<ArchiveFilter, string> = {
+  all: "전체",
+  active: "활성",
+  archived: "보관",
+}
 
 type InlineEditorComponent = (props: {
   id: string
@@ -39,6 +50,7 @@ export type WorkspaceSidebarContext = {
   clearHoverProjectSoon: () => void
   prefetchSession: (session: Session, priority?: "high" | "low") => void
   archiveSession: (session: Session) => Promise<void>
+  unarchiveSession: (session: Session) => Promise<void>
   workspaceName: (directory: string, projectId?: string, branch?: string) => string | undefined
   renameWorkspace: (directory: string, next: string, projectId?: string, branch?: string) => void
   editorOpen: (id: string) => boolean
@@ -268,6 +280,7 @@ const WorkspaceSessionList = (props: {
           clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
           prefetchSession={props.ctx.prefetchSession}
           archiveSession={props.ctx.archiveSession}
+          unarchiveSession={props.ctx.unarchiveSession}
         />
       )}
     </For>
@@ -445,26 +458,105 @@ export const LocalWorkspace = (props: {
   mobile?: boolean
 }): JSX.Element => {
   const globalSync = useGlobalSync()
+  const globalSDK = useGlobalSDK()
   const workspace = createMemo(() => {
     const [store, setStore] = globalSync.child(props.project.worktree)
     return { store, setStore }
   })
   const slug = createMemo(() => base64Encode(props.project.worktree))
-  const sessions = createMemo(() => {
+
+  const archiveFilterKey = createMemo(
+    () => `opencode:archive-filter:${workspaceKey(props.project.worktree)}`,
+  )
+  const readArchiveFilter = (): ArchiveFilter => {
+    try {
+      const raw = localStorage.getItem(archiveFilterKey())
+      if (isArchiveFilter(raw)) return raw
+    } catch {}
+    return "active"
+  }
+  const [archiveFilter, setArchiveFilterValue] = createSignal<ArchiveFilter>(readArchiveFilter())
+  const setArchiveFilter = (value: ArchiveFilter) => {
+    setArchiveFilterValue(value)
+    try {
+      localStorage.setItem(archiveFilterKey(), value)
+    } catch {}
+  }
+  createEffect(() => {
+    archiveFilterKey()
+    setArchiveFilterValue(readArchiveFilter())
+  })
+
+  const [archivedSessions, setArchivedSessions] = createSignal<Session[]>([])
+  const [archivedLoading, setArchivedLoading] = createSignal(false)
+  createEffect(() => {
+    const mode = archiveFilter()
+    if (mode === "active") return
+    const directory = props.project.worktree
+    const key = workspaceKey(directory)
+    setArchivedLoading(true)
+    globalSDK.client.session
+      .list({ directory, onlyArchived: true, limit: 10000 })
+      .then((result) => {
+        const list = (result.data ?? [])
+          .filter((s): s is Session => !!s?.id && !s.parentID)
+          .filter((s) => workspaceKey(s.directory) === key)
+        setArchivedSessions(list)
+      })
+      .catch((err) => console.error("Failed to load archived sessions", err))
+      .finally(() => setArchivedLoading(false))
+  })
+
+  const activeSessions = createMemo(() => {
     const key = workspaceKey(props.project.worktree)
     const all = workspace().store.session ?? []
-    return all
-      .filter(
-        (s) => workspaceKey(s.directory) === key && !s.parentID && !s.time?.archived,
-      )
-      .slice()
-      .sort(sortSessionsBy(props.sortNow()))
+    return all.filter((s) => workspaceKey(s.directory) === key && !s.parentID && !s.time?.archived)
   })
+  const sessions = createMemo(() => {
+    const mode = archiveFilter()
+    const activeIDs = new Set(activeSessions().map((s) => s.id))
+    const archivedUnique = archivedSessions().filter((s) => !activeIDs.has(s.id))
+    const list =
+      mode === "active"
+        ? activeSessions()
+        : mode === "archived"
+          ? archivedUnique
+          : [...activeSessions(), ...archivedUnique]
+    return list.slice().sort(sortSessionsBy(props.sortNow()))
+  })
+  const archivedIDs = createMemo(() => {
+    const activeIDs = new Set(activeSessions().map((s) => s.id))
+    return new Set(archivedSessions().filter((s) => !activeIDs.has(s.id)).map((s) => s.id))
+  })
+
+  const handleArchive = async (session: Session) => {
+    setArchivedSessions((prev) => {
+      if (prev.some((s) => s.id === session.id)) return prev
+      return [...prev, { ...session, time: { ...session.time, archived: Date.now() } }]
+    })
+    try {
+      await props.ctx.archiveSession(session)
+    } catch (err) {
+      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+      throw err
+    }
+  }
+
+  const handleUnarchive = async (session: Session) => {
+    const snapshot = archivedSessions()
+    setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+    try {
+      await props.ctx.unarchiveSession(session)
+    } catch (err) {
+      setArchivedSessions(snapshot)
+      throw err
+    }
+  }
   const groups = createMemo(() => groupSessionsByTag(sessions()))
   const count = createMemo(() => sessions()?.length ?? 0)
   const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree) }))
-  const hasMore = createMemo(() => workspace().store.sessionTotal > count())
-  const loading = () => query.isLoading && count() === 0
+  const hasMore = createMemo(() => workspace().store.sessionTotal > activeSessions().length)
+  const loading = () => (query.isLoading && count() === 0) || (archivedLoading() && count() === 0)
   const loadMore = async () => {
     workspace().setStore("limit", 10000)
     await globalSync.project.loadSessions(props.project.worktree)
@@ -570,7 +662,9 @@ export const LocalWorkspace = (props: {
                 sidebarExpanded={props.ctx.sidebarExpanded}
                 clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
                 prefetchSession={props.ctx.prefetchSession}
-                archiveSession={props.ctx.archiveSession}
+                archiveSession={handleArchive}
+                unarchiveSession={handleUnarchive}
+                dim={archiveFilter() === "all" && archivedIDs().has(session.id)}
               />
             )}
           </For>
@@ -600,8 +694,36 @@ export const LocalWorkspace = (props: {
       <Show when={loading()}>
         <SessionSkeleton />
       </Show>
-      <Show when={groups().length > 0}>
-        <div class="flex justify-end gap-0.5 px-2 pb-1">
+      <div class="flex items-center justify-end gap-0.5 px-2 pb-1">
+        <DropdownMenu>
+          <Tooltip value="상태 필터" placement="top">
+            <DropdownMenu.Trigger
+              as={Button}
+              variant="ghost"
+              size="small"
+              class="h-6 px-2 gap-1 text-12-regular text-text-weak"
+              aria-label="세션 상태 필터"
+            >
+              <Icon name="sliders" size="small" />
+              <span>{ARCHIVE_FILTER_LABEL[archiveFilter()]}</span>
+            </DropdownMenu.Trigger>
+          </Tooltip>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content>
+              <For each={ARCHIVE_FILTER_VALUES}>
+                {(value) => (
+                  <DropdownMenu.Item onSelect={() => setArchiveFilter(value)}>
+                    <DropdownMenu.ItemLabel>{ARCHIVE_FILTER_LABEL[value]}</DropdownMenu.ItemLabel>
+                    <Show when={archiveFilter() === value}>
+                      <Icon name="check" size="small" class="ml-auto text-icon-base" />
+                    </Show>
+                  </DropdownMenu.Item>
+                )}
+              </For>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu>
+        <Show when={groups().length > 0}>
           <Tooltip value="전체 펼치기" placement="top">
             <IconButton
               icon="expand"
@@ -620,8 +742,8 @@ export const LocalWorkspace = (props: {
               onClick={() => setAllExpanded(false)}
             />
           </Tooltip>
-        </div>
-      </Show>
+        </Show>
+      </div>
       <DragDropProvider onDragEnd={handleDragEnd} collisionDetector={closestCenter}>
         <DragDropSensors />
         <SortableProvider ids={draggableGroups().map((g) => g.tag)}>

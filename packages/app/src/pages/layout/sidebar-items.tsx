@@ -82,6 +82,8 @@ export type SessionItemProps = {
   clearHoverProjectSoon: () => void
   prefetchSession: (session: Session, priority?: "high" | "low") => void
   archiveSession: (session: Session) => Promise<void>
+  unarchiveSession?: (session: Session) => Promise<void>
+  dim?: boolean
 }
 
 const SessionRow = (props: {
@@ -214,11 +216,14 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     />
   )
 
+  const isArchived = () => !!props.session.time?.archived
+
   return (
     <>
       <div
         data-session-id={props.session.id}
         class="group/session relative w-full min-w-0 rounded-md cursor-default pr-3 transition-colors hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active"
+        classList={{ "opacity-60": !!props.dim }}
         style={{ "padding-left": `${8 + (props.level ?? 0) * 16}px` }}
       >
         <div class="flex min-w-0 items-center gap-1">
@@ -250,19 +255,38 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
                 "group-focus-within/session:w-6 group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
               }}
             >
-              <Tooltip value={language.t("common.archive")} placement="top">
-                <IconButton
-                  icon="archive"
-                  variant="ghost"
-                  class="size-6 rounded-md"
-                  aria-label={language.t("common.archive")}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    void props.archiveSession(props.session)
-                  }}
-                />
-              </Tooltip>
+              <Show
+                when={isArchived() && props.unarchiveSession}
+                fallback={
+                  <Tooltip value={language.t("common.archive")} placement="top">
+                    <IconButton
+                      icon="archive"
+                      variant="ghost"
+                      class="size-6 rounded-md"
+                      aria-label={language.t("common.archive")}
+                      onClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        void props.archiveSession(props.session)
+                      }}
+                    />
+                  </Tooltip>
+                }
+              >
+                <Tooltip value="보관 해제" placement="top">
+                  <IconButton
+                    icon="reset"
+                    variant="ghost"
+                    class="size-6 rounded-md"
+                    aria-label="보관 해제"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      void props.unarchiveSession?.(props.session)
+                    }}
+                  />
+                </Tooltip>
+              </Show>
             </div>
           </Show>
         </div>
