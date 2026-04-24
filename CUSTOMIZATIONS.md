@@ -83,7 +83,7 @@
 
 **Step 1: Sidecar 재빌드** (OPENCODE_CHANNEL 적용):
 ```bash
-cd /c/Users/gwangjun/dev/opencode-tag/packages/desktop
+cd /c/Users/gwangjun/dev/opencode-custom/packages/desktop
 export OPENCODE_CHANNEL=latest
 export TAURI_ENV_TARGET_TRIPLE=x86_64-pc-windows-msvc  # Windows 기준
 bun ./scripts/predev.ts
@@ -100,14 +100,14 @@ Copied ../opencode/dist/opencode-windows-x64-baseline/bin/opencode.exe to src-ta
 
 PowerShell:
 ```powershell
-cd C:\Users\gwangjun\dev\opencode-tag
+cd C:\Users\gwangjun\dev\opencode-custom
 $env:OPENCODE_CHANNEL="latest"
 bun run --cwd packages/desktop tauri build --config src-tauri/tauri.local.conf.json
 ```
 
 Git Bash:
 ```bash
-cd /c/Users/gwangjun/dev/opencode-tag
+cd /c/Users/gwangjun/dev/opencode-custom
 export OPENCODE_CHANNEL=latest
 bun run --cwd packages/desktop tauri build --config src-tauri/tauri.local.conf.json
 ```
@@ -143,13 +143,13 @@ packages/desktop/src-tauri/sidecars/opencode-cli-x86_64-pc-windows-msvc.exe --ve
 ## 4. 업스트림 릴리즈 반영 워크플로우
 
 ### 원격 저장소 구조
-- `origin`: `https://github.com/lluxium/opencode-tag.git` (내 fork)
+- `origin`: `https://github.com/lluxium/opencode-custom.git` (내 fork)
 - `upstream`: `https://github.com/anomalyco/opencode.git` (원본)
 
 ### 새 릴리즈가 나왔을 때 (권장 1-2주마다)
 
 ```bash
-cd C:\Users\gwangjun\dev\opencode-tag
+cd C:\Users\gwangjun\dev\opencode-custom
 
 # 1. 업스트림 최신 받기
 git fetch upstream
@@ -249,7 +249,7 @@ bun run --cwd packages/desktop tauri build --config src-tauri/tauri.local.conf.j
 코드 수정 테스트할 때:
 
 ```bash
-cd /c/Users/gwangjun/dev/opencode-tag
+cd /c/Users/gwangjun/dev/opencode-custom
 export PATH="$USERPROFILE/.cargo/bin:$PATH"
 bun run --cwd packages/desktop tauri dev
 ```
