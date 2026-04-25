@@ -311,7 +311,94 @@ with dst: src.backup(dst)
 
 ---
 
-## 8. 참고 커밋
+## 8. State 폴더 구조 (XDG_STATE_HOME)
+
+### XDG 기본
+
+opencode는 XDG Base Directory 관례를 따름. 환경변수로 경로 커스터마이징 가능:
+
+| 환경변수 | 용도 | Windows 기본 경로 |
+|---------|------|------------------|
+| `XDG_CONFIG_HOME` | 설정 | `%USERPROFILE%\.config\` |
+| `XDG_DATA_HOME` | 중요 데이터 (DB 등) | `%USERPROFILE%\.local\share\` |
+| `XDG_STATE_HOME` | 상태 (favorites/history) | `%USERPROFILE%\.local\state\` |
+| `XDG_CACHE_HOME` | 캐시 | `%USERPROFILE%\.cache\` |
+
+### State 폴더에 들어가는 것
+
+`$XDG_STATE_HOME/opencode/` 아래:
+- `model.json` — AI 모델 favorites
+- `frecency.jsonl` — 최근 사용 이력
+- `prompt-history.jsonl` — 프롬프트 히스토리
+- `kv.json` — 기타 상태값
+- `locks/` — 동시 실행 방지 락
+
+### Tauri 데스크톱의 XDG_STATE_HOME 덮어쓰기
+
+**모든 Tauri로 빌드된 opencode 데스크톱 앱** (공식 포함)은 sidecar 실행 시 `XDG_STATE_HOME`을 강제로 override.
+
+코드 위치: `packages/desktop/src-tauri/src/cli.rs:371~389`
+
+```rust
+let state_dir = app.path().resolve("", BaseDirectory::AppLocalData);
+envs.push(("XDG_STATE_HOME", state_dir.to_string()));
+```
+
+`BaseDirectory::AppLocalData`는 **앱 identifier 기반 자동 경로**:
+
+| Identifier | State 경로 |
+|-----------|----------|
+| `ai.opencode.desktop` (공식) | `%LOCALAPPDATA%\ai.opencode.desktop\opencode\` |
+| `ai.opencode.desktop.beta` | `%LOCALAPPDATA%\ai.opencode.desktop.beta\opencode\` |
+| `ai.opencode.desktop.dev` | `%LOCALAPPDATA%\ai.opencode.desktop.dev\opencode\` |
+| `ai.opencode.desktop.local` (Custom) | `%LOCALAPPDATA%\ai.opencode.desktop.local\opencode\` |
+
+**설계 의도:** 버전별 state 완전 격리. Beta가 state 파일 포맷 바꿔도 prod 영향 없음.
+
+### 결과: CLI와 Desktop의 state 분리
+
+- **CLI** (터미널에서 `opencode`): XDG_STATE_HOME 덮어쓰기 안 됨 → 기본 경로 (`%USERPROFILE%\.local\state\opencode\`) 사용
+- **모든 Desktop 변종**: 각자 identifier 폴더 사용
+
+즉 CLI로 설정한 favorites는 데스크톱 앱에서 안 보이고, 반대도 마찬가지.
+
+### Env 상속 규칙
+
+자식 프로세스 (MCP 서버 등)는 **spawn 시점 부모의 env 그대로 상속**:
+
+- CLI가 spawn한 MCP 자식 → XDG_STATE_HOME 미설정 → CLI state 공유
+- Desktop이 spawn한 MCP 자식 → Desktop state 경로 사용
+
+**이미 실행 중인 자식은 부모가 나중에 뭐 하든 영향 없음** (env는 태어날 때 한 번만 받음).
+
+### "CLI 우선 실행" 패턴
+
+MCP 기반 외부 도구(텔레그램 봇 등)가 CLI state와 favorites 공유를 필요로 하면:
+
+1. 터미널에서 `opencode` 실행 → MCP 자식 spawn (CLI env 상속)
+2. 이후 Desktop 앱 실행 → 자기 sidecar 별도 관리, 기존 MCP 자식 영향 X
+3. Desktop 종료해도 MCP 자식은 CLI 프로세스 밑이라 계속 실행
+4. CLI 종료 시 MCP 자식도 같이 종료
+
+Desktop에서 favorites를 안 쓰면 state 분리가 문제 되지 않음.
+
+### 완전 통합하려면 (참고)
+
+CLI/Desktop state를 통합하고 싶으면 `cli.rs`에서 XDG_STATE_HOME 엔트리 4줄 삭제:
+
+```rust
+// 삭제
+(
+    "XDG_STATE_HOME".to_string(),
+    state_dir.to_string_lossy().to_string(),
+),
+```
+
+→ sidecar가 기본 경로 사용 → CLI와 공유. 단 버전별 격리 특성은 잃음.
+
+---
+
+## 9. 참고 커밋
 
 - `c0dbc0d71` - feat: tag-based session grouping with drag-drop ordering
 - (미커밋) feat: session unarchive UI — status filter dropdown + context-aware hover button + optimistic update + id dedupe
