@@ -309,6 +309,45 @@ with dst: src.backup(dst)
 ```
 단, **`OPENCODE_CHANNEL=latest`로 빌드하면 이 단계 불필요** (DB 공유).
 
+### dev 모드 콘솔에 `Cannot remove ... nonexistent ...` 경고 다수
+
+**dev 모드 한정 진단 noise**. prod 빌드(인스톨러)에선 안 나타남. 기능 영향 없음.
+
+**원인**: `@thisbeyond/solid-dnd@0.7.5`의 `dev.js`에만 `console.warn`이 있음. `package.json` exports의 `development` 조건에서만 dev.js 사용, prod 빌드는 `index.js` 사용 (warning 0줄).
+
+**3개 `DragDropProvider` 인스턴스**가 동시 떠 있음:
+- `sidebar-shell.tsx` rail (프로젝트 아이콘) — upstream
+- `layout.tsx` workspaces popover — upstream
+- `sidebar-workspace.tsx` 태그 그룹 — **우리 fork**
+
+**트리거**: 프로젝트 이동 시 `navigateWithSidebarReset`이 `setHoverProject(undefined)` + `navigate(href)` 를 같은 reactive update에서 발생 → solid-dnd cleanup이 race condition으로 `state[type][id]` 이미 사라진 상태에서 `removeTransformer` 호출 → `console.warn`.
+
+**식별 방법**:
+1. **prod 빌드 산출물에서 warning 코드 검증**:
+   ```bash
+   grep -c "Cannot remove" packages/desktop/dist/assets/*.js
+   ```
+   모두 `0`이면 prod엔 없음 (검증 완료된 사실)
+2. solid-dnd 라이브러리에서:
+   ```bash
+   grep -c "nonexistent" node_modules/.bun/@thisbeyond+solid-dnd@0.7.5+*/node_modules/@thisbeyond/solid-dnd/dist/index.js
+   ```
+   `0`이면 prod build에 warning 없음
+
+**무시해도 되는 조건**:
+- 기능 정상 동작 (DnD 자체는 작동)
+- prod 빌드에 warning 없음 확인
+- 같은 패턴이 upstream의 shell/workspace DnD에서도 발생
+
+**진짜 문제로 봐야 할 조건**:
+- prod 빌드에서도 warning 출력 (DevTools 못 켜면 빌드 산출물 grep으로 확인)
+- DnD 동작 자체가 깨짐 (드래그 불가, 순서 안 바뀜)
+- 메모리 누수 발생
+
+**근본 수정하려면** (현재 우선순위 낮음):
+- 우리 `sidebar-workspace.tsx`의 `<SortableProvider ids={draggableGroups().map((g) => g.tag)}>`에서 `ids`가 매번 새 배열이라 race 유발 가능 → stable reference로 보장하거나 `<Index>` 사용
+- 다만 같은 패턴이 upstream의 두 DnD에도 있으므로 단독 수정은 효과 제한적
+
 ---
 
 ## 8. State 폴더 구조 (XDG_STATE_HOME)
@@ -400,8 +439,8 @@ CLI/Desktop state를 통합하고 싶으면 `cli.rs`에서 XDG_STATE_HOME 엔트
 
 ## 9. 참고 커밋
 
-- `c0dbc0d71` - feat: tag-based session grouping with drag-drop ordering
-- (미커밋) feat: session unarchive UI — status filter dropdown + context-aware hover button + optimistic update + id dedupe
+- `ace23e97e` - feat: tag-based session grouping with drag-drop ordering (rebase 후, 원본 `c0dbc0d71`)
+- `4a2a39e4d` - feat: session unarchive UI with status filter and optimistic update
 - 이후 커밋들도 여기에 기록해 두면 편함
 
 ### 언아카이브 테스트 방법
@@ -418,8 +457,13 @@ CLI/Desktop state를 통합하고 싶으면 `cli.rs`에서 XDG_STATE_HOME 엔트
 ### 빌드 결과 확인 (최근 빌드 기록)
 
 - 2026-04-24: `OpenCode Custom_1.14.21_x64-setup.exe` 빌드 성공, sidecar 버전 `1.14.23` (`channel=latest`)
+- **2026-04-25**: `OpenCode Custom_1.14.24_x64-setup.exe` 빌드 성공, sidecar 버전 `1.14.25` (`channel=latest`)
+  - upstream/dev rebase 무충돌 (5개 우리 커밋 깔끔히 적용됨)
+  - typecheck 13/13 통과
+  - 폴더 rename `opencode-tag` → `opencode-custom` 완료
+  - prod 빌드 산출물에 solid-dnd warning 코드 0건 검증 완료
 - 인스톨러 경로: `packages/desktop/src-tauri/target/release/bundle/nsis/OpenCode Custom_X.X.X_x64-setup.exe`
 
 ---
 
-_최종 업데이트: 2026-04-24 (언아카이브 UI + optimistic/dedupe 버그픽스 + rebase 리스크 테이블 추가)_
+_최종 업데이트: 2026-04-25 (v1.14.24 rebase + 폴더 rename + DnD console noise 진단 추가)_
