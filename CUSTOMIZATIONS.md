@@ -85,6 +85,7 @@
 ```bash
 cd /c/Users/gwangjun/dev/opencode-custom/packages/desktop
 export OPENCODE_CHANNEL=latest
+export OPENCODE_VERSION=1.14.28  # 현재 빌드할 정확한 upstream 버전
 export TAURI_ENV_TARGET_TRIPLE=x86_64-pc-windows-msvc  # Windows 기준
 bun ./scripts/predev.ts
 ```
@@ -194,6 +195,7 @@ bun install
 
 # 8. Sidecar 재빌드 (중요! 안 하면 이전 채널의 sidecar 사용됨)
 export OPENCODE_CHANNEL=latest
+export OPENCODE_VERSION=1.14.28
 export TAURI_ENV_TARGET_TRIPLE=x86_64-pc-windows-msvc
 bun --cwd packages/desktop ./scripts/predev.ts
 
@@ -462,8 +464,12 @@ CLI/Desktop state를 통합하고 싶으면 `cli.rs`에서 XDG_STATE_HOME 엔트
   - typecheck 13/13 통과
   - 폴더 rename `opencode-tag` → `opencode-custom` 완료
   - prod 빌드 산출물에 solid-dnd warning 코드 0건 검증 완료
+- **2026-04-27**: `OpenCode Custom_1.14.28_x64-setup.exe` 빌드 성공, sidecar 버전 `1.14.28` (`channel=latest`, `OPENCODE_VERSION=1.14.28`)
+  - upstream `v1.14.28` rebase 무충돌 (6개 우리 커밋 적용)
+  - dev 모드 검증 후 release 인스톨러 빌드
+  - `latest` 채널만 지정하면 npm latest 기준 다음 패치(`1.14.29`)로 계산되므로 `OPENCODE_VERSION=1.14.28`을 명시
 - 인스톨러 경로: `packages/desktop/src-tauri/target/release/bundle/nsis/OpenCode Custom_X.X.X_x64-setup.exe`
 
 ---
 
-_최종 업데이트: 2026-04-25 (v1.14.24 rebase + 폴더 rename + DnD console noise 진단 추가)_
+_최종 업데이트: 2026-04-27 (v1.14.28 rebase + dev 검증 + installer build 기록 추가)_
